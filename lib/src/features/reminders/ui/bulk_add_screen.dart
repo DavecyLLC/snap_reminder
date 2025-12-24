@@ -2,247 +2,182 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../services/notifications_service.dart';
 import '../data/image_store.dart';
 import '../data/reminders_repo.dart';
 import '../models/photo_reminder.dart';
-import '../notifications/notification_service.dart';
 
 class BulkAddScreen extends StatefulWidget {
-  const BulkAddScreen({
-    super.key,
-    required this.repo,
-    required this.notifications,
-  });
-
   final RemindersRepo repo;
-  final NotificationService notifications;
+  final ImageStore imageStore;
+
+  const BulkAddScreen({super.key, required this.repo, required this.imageStore});
 
   @override
   State<BulkAddScreen> createState() => _BulkAddScreenState();
 }
 
 class _BulkAddScreenState extends State<BulkAddScreen> {
-  final picker = ImagePicker();
-  final store = ImageStore();
+  final _picker = ImagePicker();
 
-  List<XFile> selected = [];
-  int activeIndex = 0;
+  final _noteCtrl = TextEditingController();
+  DateTime _remindAt = DateTime.now().add(const Duration(hours: 1));
+  bool _saving = false;
 
-  DateTime remindAt = DateTime.now().add(const Duration(hours: 3));
-  final TextEditingController noteTemplate = TextEditingController();
+  List<XFile> _selected = [];
 
-  Future<void> _pickMultiple() async {
-    final files = await picker.pickMultiImage(imageQuality: 90);
-    if (files.isEmpty) return;
+  @override
+  void dispose() {
+    _noteCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickRemindAt() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final now = DateTime.now();
+
+    final date = await showDatePicker(
+      context: context,
+      firstDate: now.subtract(const Duration(days: 365)),
+      lastDate: now.add(const Duration(days: 3650)),
+      initialDate: _remindAt,
+    );
+    if (date == null) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_remindAt),
+    );
+    if (time == null) return;
+
     setState(() {
-      selected = files;
-      activeIndex = 0;
+      _remindAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
     });
   }
 
-  Future<void> _pickDateTime() async {
-    final now = DateTime.now();
-    final d = await showDatePicker(
-      context: context,
-      firstDate: DateTime(now.year - 1),
-      lastDate: DateTime(now.year + 10),
-      initialDate: remindAt,
-    );
-    if (d == null) return;
-
-    final t = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(remindAt),
-    );
-    if (t == null) return;
-
-    setState(() => remindAt = DateTime(d.year, d.month, d.day, t.hour, t.minute));
+  Future<void> _pickMany() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final files = await _picker.pickMultiImage(imageQuality: 90);
+    if (files.isEmpty) return;
+    setState(() => _selected = files);
   }
 
-  void _applyQuick(Duration delta) {
-    setState(() => remindAt = DateTime.now().add(delta));
-  }
+  Future<void> _saveBulk() async {
+    FocusManager.instance.primaryFocus?.unfocus();
 
-  Future<void> _saveAll() async {
-    if (selected.isEmpty) return;
-
-    final now = DateTime.now();
-    final note = noteTemplate.text.trim();
-
-    final List<PhotoReminder> list = [];
-
-    for (final x in selected) {
-      final savedPath = await store.saveImage(x.path);
-      final r = PhotoReminder(
-        id: const Uuid().v4(),
-        imagePath: savedPath,
-        dateTaken: now,
-        remindAt: remindAt,
-        note: note,
-        createdAt: now,
-      );
-      list.add(r);
+    if (_selected.isEmpty) {
+      await _pickMany();
+      if (_selected.isEmpty) return;
     }
 
-    await widget.repo.addMany(list);
+    setState(() => _saving = true);
+    try {
+      final now = DateTime.now();
+      final note = _noteCtrl.text.trim();
 
-    for (final r in list) {
-      await widget.notifications.scheduleReminder(
-        reminderId: r.id,
-        remindAt: r.remindAt,
-        note: r.note,
-      );
+      final reminders = <PhotoReminder>[];
+      for (final x in _selected) {
+        final stored = await widget.imageStore.saveImage(x.path);
+        final r = PhotoReminder(
+          id: const Uuid().v4(),
+          imagePath: stored,
+          dateTaken: now,
+          remindAt: _remindAt,
+          note: note,
+          createdAt: now,
+        );
+        reminders.add(r);
+      }
+
+      await widget.repo.addMany(reminders);
+
+      // ✅ schedule notifications for each
+      for (final r in reminders) {
+        await NotificationsService.instance.scheduleReminder(
+          reminderId: r.id,
+          remindAt: r.remindAt,
+          title: 'Photo reminder',
+          body: r.note.isNotEmpty ? r.note : 'Tap to view your photo',
+        );
+      }
+
+      if (mounted) Navigator.pop(context);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-
-    if (mounted) Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    final df = DateFormat('EEE, MMM d • h:mm a');
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Bulk Add', style: TextStyle(fontWeight: FontWeight.w800)),
-        actions: [
-          TextButton.icon(
-            onPressed: _pickMultiple,
-            icon: const Icon(Icons.photo_library_rounded),
-            label: const Text('Pick'),
-          ),
-          const SizedBox(width: 6),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-        child: Column(
-          children: [
-            if (selected.isEmpty)
-              Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.playlist_add_rounded, size: 54, color: Colors.white.withOpacity(0.6)),
-                      const SizedBox(height: 12),
-                      const Text('Select multiple photos', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                        onPressed: _pickMultiple,
-                        icon: const Icon(Icons.photo_library_rounded),
-                        label: const Text('Pick Photos'),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else ...[
-              SizedBox(
-                height: 78,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: selected.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 10),
-                  itemBuilder: (context, i) {
-                    final isActive = i == activeIndex;
-                    return GestureDetector(
-                      onTap: () => setState(() => activeIndex = i),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        width: 78,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            width: 2,
-                            color: isActive ? Theme.of(context).colorScheme.primary : Colors.transparent,
-                          ),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Image.file(File(selected[i].path), fit: BoxFit.cover),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+      appBar: AppBar(title: const Text('Bulk add')),
+      body: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.all(16),
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              FilledButton.icon(
+                onPressed: _saving ? null : _pickMany,
+                icon: const Icon(Icons.photo_library_outlined),
+                label: Text(_selected.isEmpty ? 'Pick photos' : 'Pick again (${_selected.length})'),
               ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: Image.file(
-                    File(selected[activeIndex].path),
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Text('Remind at', style: TextStyle(fontWeight: FontWeight.w800)),
-                          const Spacer(),
-                          Text(df.format(remindAt), style: const TextStyle(fontWeight: FontWeight.w700)),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: _pickDateTime,
-                              icon: const Icon(Icons.calendar_month_rounded),
-                              label: const Text('Pick date/time'),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          ActionChip(label: const Text('Tonight'), onPressed: () => _applyQuick(const Duration(hours: 6))),
-                          ActionChip(label: const Text('Tomorrow AM'), onPressed: () => _applyQuick(const Duration(hours: 14))),
-                          ActionChip(label: const Text('+1 day'), onPressed: () => _applyQuick(const Duration(days: 1))),
-                          ActionChip(label: const Text('+1 week'), onPressed: () => _applyQuick(const Duration(days: 7))),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: noteTemplate,
-                        maxLines: 2,
-                        decoration: const InputDecoration(hintText: 'Note template (optional)…'),
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: _saveAll,
-                              icon: const Icon(Icons.save_rounded),
-                              label: Text('Save All (${selected.length})'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+              FilledButton.icon(
+                onPressed: _saving ? null : _saveBulk,
+                icon: _saving
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.save_outlined),
+                label: const Text('Save all'),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+
+          if (_selected.isNotEmpty) ...[
+            SizedBox(
+              height: 110,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _selected.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (context, i) => ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: AspectRatio(
+                    aspectRatio: 1,
+                    child: Image.file(File(_selected[i].path), fit: BoxFit.cover),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
           ],
-        ),
+
+          TextField(
+            controller: _noteCtrl,
+            decoration: const InputDecoration(labelText: 'Note (applies to all)'),
+            maxLines: 2,
+          ),
+          const SizedBox(height: 12),
+
+          Card(
+            child: ListTile(
+              title: const Text('Remind at'),
+              subtitle: Text(_fmt(_remindAt)),
+              trailing: const Icon(Icons.edit_calendar_outlined),
+              onTap: _saving ? null : _pickRemindAt,
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  static String _fmt(DateTime dt) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${dt.year}-${two(dt.month)}-${two(dt.day)}  ${two(dt.hour)}:${two(dt.minute)}';
   }
 }

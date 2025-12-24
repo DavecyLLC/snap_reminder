@@ -2,111 +2,80 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
-import 'src/app/app_theme.dart';
+import 'app_theme.dart';
+import 'src/services/notifications_service.dart';
+
+import 'src/features/reminders/data/photos_store.dart';
 import 'src/features/reminders/data/reminders_repo.dart';
-import 'src/features/reminders/models/photo_reminder.dart';
-import 'src/features/reminders/notifications/notification_service.dart';
-import 'src/features/reminders/ui/bulk_add_screen.dart';
-import 'src/features/reminders/ui/reminder_detail_screen.dart';
 import 'src/features/reminders/ui/reminders_home_screen.dart';
+import 'src/features/reminders/ui/add_reminder_screen.dart';
+import 'src/features/reminders/ui/edit_reminder_screen.dart';
+import 'src/features/reminders/ui/reminder_detail_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
   await Hive.initFlutter();
 
   final repo = RemindersRepo();
   await repo.init();
 
-  final notifications = NotificationService();
+  final photosStore = PhotosStore();
 
-  runApp(PicReminderApp(repo: repo, notifications: notifications));
-}
+  // Requests notification permissions + timezone init
+  await NotificationsService.instance.init();
 
-class PicReminderApp extends StatefulWidget {
-  const PicReminderApp({
-    super.key,
-    required this.repo,
-    required this.notifications,
-  });
-
-  final RemindersRepo repo;
-  final NotificationService notifications;
-
-  @override
-  State<PicReminderApp> createState() => _PicReminderAppState();
-}
-
-class _PicReminderAppState extends State<PicReminderApp> {
-  late final GoRouter _router = GoRouter(
+  final router = GoRouter(
+    initialLocation: '/',
     routes: [
       GoRoute(
         path: '/',
-        builder: (context, state) => RemindersHomeScreen(
-          repo: widget.repo,
-          notifications: widget.notifications,
-        ),
-        routes: [
-          GoRoute(
-            path: 'detail',
-            builder: (context, state) {
-              final reminder = state.extra as PhotoReminder;
-              return ReminderDetailScreen(
-                reminder: reminder,
-                repo: widget.repo,
-                notifications: widget.notifications,
-              );
-            },
-          ),
-          GoRoute(
-            path: 'bulk',
-            builder: (context, state) => BulkAddScreen(
-              repo: widget.repo,
-              notifications: widget.notifications,
-            ),
-          ),
-        ],
+        builder: (_, __) => RemindersHomeScreen(repo: repo, photosStore: photosStore),
       ),
-
-      // Notification tap route (opens by id)
       GoRoute(
-        path: '/open/:id',
-        builder: (context, state) {
-          final id = state.pathParameters['id']!;
-          final r = widget.repo.getById(id);
-          if (r == null) {
-            return const Scaffold(
-              body: Center(child: Text('Reminder not found')),
-            );
-          }
-          return ReminderDetailScreen(
-            reminder: r,
-            repo: widget.repo,
-            notifications: widget.notifications,
-          );
-        },
+        path: '/add',
+        builder: (_, __) => AddReminderScreen(repo: repo, photosStore: photosStore),
+      ),
+      GoRoute(
+        path: '/detail/:id',
+        builder: (_, state) => ReminderDetailScreen(
+          repo: repo,
+          photosStore: photosStore,
+          reminderId: state.pathParameters['id']!,
+        ),
+      ),
+      GoRoute(
+        path: '/edit/:id',
+        builder: (_, state) => EditReminderScreen(
+          repo: repo,
+          photosStore: photosStore,
+          reminderId: state.pathParameters['id']!,
+        ),
       ),
     ],
   );
 
-  @override
-  void initState() {
-    super.initState();
+  runApp(MyApp(router: router));
+}
 
-    widget.notifications.init(
-      onTapReminder: (id) {
-        _router.go('/open/$id');
-      },
-    );
-  }
+class MyApp extends StatelessWidget {
+  final GoRouter router;
+  const MyApp({super.key, required this.router});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: 'Pic Reminder',
-      theme: AppTheme.dark(),
-      routerConfig: _router,
       debugShowCheckedModeBanner: false,
+      title: 'Pic Reminder',
+      theme: AppTheme.darkPurple(),
+      routerConfig: router,
+      builder: (context, child) {
+        // Tap anywhere to dismiss keyboard
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: child!,
+        );
+      },
     );
   }
 }

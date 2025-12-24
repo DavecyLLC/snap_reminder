@@ -13,6 +13,7 @@ class RemindersRepo {
     final list = _box.values
         .whereType<Map>()
         .map((e) => PhotoReminder.fromMap(Map<String, dynamic>.from(e)))
+        .where((r) => r.id.isNotEmpty)
         .toList();
 
     list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -27,15 +28,11 @@ class RemindersRepo {
     return null;
   }
 
-  Future<void> add(PhotoReminder reminder) async {
+  Future<void> upsert(PhotoReminder reminder) async {
     await _box.put(reminder.id, reminder.toMap());
   }
 
-  Future<void> addMany(List<PhotoReminder> reminders) async {
-    for (final r in reminders) {
-      await _box.put(r.id, r.toMap());
-    }
-  }
+  Future<void> add(PhotoReminder reminder) => upsert(reminder);
 
   Future<void> removeById(String id) async {
     await _box.delete(id);

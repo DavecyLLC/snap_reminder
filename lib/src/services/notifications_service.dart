@@ -24,21 +24,13 @@ class NotificationsService {
       requestSoundPermission: true,
     );
 
-    const settings = InitializationSettings(android: androidInit, iOS: iosInit);
-    await _plugin.initialize(settings);
-
-    // Explicit iOS permission request
-    final ios = _plugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
-    await ios?.requestPermissions(alert: true, badge: true, sound: true);
-
-    final darwin =
-        _plugin.resolvePlatformSpecificImplementation<DarwinFlutterLocalNotificationsPlugin>();
-    await darwin?.requestPermissions(alert: true, badge: true, sound: true);
+    const initSettings = InitializationSettings(android: androidInit, iOS: iosInit);
+    await _plugin.initialize(initSettings);
 
     _initialized = true;
   }
 
-  int _notificationId(String reminderId) => reminderId.hashCode & 0x7fffffff;
+  int _notifId(String reminderId) => reminderId.hashCode & 0x7fffffff;
 
   Future<void> scheduleReminder({
     required String reminderId,
@@ -48,7 +40,7 @@ class NotificationsService {
   }) async {
     await init();
 
-    final id = _notificationId(reminderId);
+    final id = _notifId(reminderId);
     await _plugin.cancel(id);
 
     final when = tz.TZDateTime.from(remindAt, tz.local);
@@ -77,11 +69,17 @@ class NotificationsService {
       when,
       details,
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      matchDateTimeComponents: null,
     );
   }
 
   Future<void> cancelReminder(String reminderId) async {
     await init();
-    await _plugin.cancel(_notificationId(reminderId));
+    await _plugin.cancel(_notifId(reminderId));
+  }
+
+  Future<void> cancelAll() async {
+    await init();
+    await _plugin.cancelAll();
   }
 }
