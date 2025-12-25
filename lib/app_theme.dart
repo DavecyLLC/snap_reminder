@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class AppTheme {
   static ThemeData darkPurple() {
     const background = Color(0xff9f90ad); // light purple background
-    const card = Color(0xffe8d4fa); // white cards
+    const card = Color(0xffd7c8fa); // white cards
     const accent = Color(0xFF7C5CFF); // purple accent
     const textPrimary = Color(0xFF1F1F2E);
 
