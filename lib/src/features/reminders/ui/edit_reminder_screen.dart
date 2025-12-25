@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../services/notifications_service.dart';
+import '../../../utils/pickers.dart';
 import '../data/photos_store.dart';
 import '../data/reminders_repo.dart';
 import '../models/photo_reminder.dart';
@@ -25,24 +26,28 @@ class EditReminderScreen extends StatefulWidget {
 }
 
 class _EditReminderScreenState extends State<EditReminderScreen> {
-  final _picker = ImagePicker();
+  final ImagePicker _picker = ImagePicker();
+  final TextEditingController _noteCtrl = TextEditingController();
 
-  PhotoReminder? _r;
-  final _noteCtrl = TextEditingController();
+  PhotoReminder? _reminder;
   DateTime _remindAt = DateTime.now();
   bool _saving = false;
 
-  // If user retakes, we keep a temp camera path until Save.
+  /// Temp camera file path shown immediately until user saves.
   String? _tempCameraPath;
 
   @override
   void initState() {
     super.initState();
-    _r = widget.repo.getById(widget.reminderId);
+    _load();
+  }
 
-    if (_r != null) {
-      _noteCtrl.text = _r!.note;
-      _remindAt = _r!.remindAt;
+  void _load() {
+    _reminder = widget.repo.getById(widget.reminderId);
+    final r = _reminder;
+    if (r != null) {
+      _noteCtrl.text = r.note;
+      _remindAt = r.remindAt;
     }
   }
 
@@ -54,51 +59,66 @@ class _EditReminderScreenState extends State<EditReminderScreen> {
 
   Future<void> _retakePhoto() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final shot = await _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+
+    final shot = await _picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 85,
+    );
     if (shot == null) return;
 
-    setState(() {
-      _tempCameraPath = shot.path; // show immediately
-    });
+    setState(() => _tempCameraPath = shot.path);
   }
+
+  void _removeTempPhoto() => setState(() => _tempCameraPath = null);
+
+  // In edit_reminder_screen.dart, find the _pickTime method (around line 78)
+    // and update it like this:
 
   Future<void> _pickTime() async {
-    FocusManager.instance.primaryFocus?.unfocus();
-    final now = DateTime.now();
+      FocusManager.instance.primaryFocus?.unfocus();
+      await Future<void>.delayed(const Duration(milliseconds: 16));
 
-    final date = await showDatePicker(
-      context: context,
-      firstDate: now.subtract(const Duration(days: 365)),
-      lastDate: now.add(const Duration(days: 3650)),
-      initialDate: _remindAt,
-    );
-    if (date == null) return;
+      final date = await safePickDate(
+        initialDate: _remindAt,
+        firstDate: DateTime.now().subtract(const Duration(days: 365)),
+        lastDate: DateTime.now().add(const Duration(days: 3650)),
+      );
+      if (date == null) return;
 
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(_remindAt),
-    );
-    if (time == null) return;
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (!mounted) return;
 
-    setState(() {
-      _remindAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
-    });
-  }
+      final time = await safeShowTimePicker(
+        initialTime: TimeOfDay.fromDateTime(_remindAt),
+      );
+      if (time == null || !mounted) return;
+
+      setState(() {
+        _remindAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+      });
+    }
+
+
+
+
+
 
   Future<void> _save() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final r = _r;
+
+    final r = _reminder;
     if (r == null) return;
 
     setState(() => _saving = true);
     try {
-      // If user retook photo, save it to Photos and replace assetId.
-      String newAssetId = r.assetId;
-      String? newLegacyPath = r.legacyImagePath;
+      var newAssetId = r.assetId;
+      var newLegacyPath = r.legacyImagePath;
 
-      if (_tempCameraPath != null && _tempCameraPath!.trim().isNotEmpty) {
-        newAssetId = await widget.photosStore.saveToPhotos(_tempCameraPath!);
-        newLegacyPath = null; // once we have Photos, we don't need legacy path
+      // If user retook photo, save it to Photos and update assetId.
+      final temp = _tempCameraPath;
+      if (temp != null && temp.trim().isNotEmpty) {
+        newAssetId = await widget.photosStore.saveToPhotos(temp);
+        newLegacyPath = null;
       }
 
       final updated = PhotoReminder(
@@ -120,13 +140,13 @@ class _EditReminderScreenState extends State<EditReminderScreen> {
         body: updated.note.isNotEmpty ? updated.note : 'Tap to view your photo',
       );
 
-      if (mounted) Navigator.pop(context);
+      if (!mounted) return;
+      Navigator.pop(context);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Save failed: $e')),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Save failed: $e')),
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -134,7 +154,7 @@ class _EditReminderScreenState extends State<EditReminderScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final r = _r;
+    final r = _reminder;
     if (r == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Edit')),
@@ -142,7 +162,7 @@ class _EditReminderScreenState extends State<EditReminderScreen> {
       );
     }
 
-    final hasTemp = _tempCameraPath != null && _tempCameraPath!.trim().isNotEmpty;
+    final hasTemp = (_tempCameraPath ?? '').trim().isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Edit reminder')),
@@ -150,14 +170,12 @@ class _EditReminderScreenState extends State<EditReminderScreen> {
         padding: const EdgeInsets.all(16),
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
-          // ✅ Image preview (temp retake first, otherwise existing)
           _EditImagePreview(
             photosStore: widget.photosStore,
             reminder: r,
             tempCameraPath: _tempCameraPath,
           ),
           const SizedBox(height: 12),
-
           Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -169,7 +187,7 @@ class _EditReminderScreenState extends State<EditReminderScreen> {
               ),
               if (hasTemp)
                 OutlinedButton.icon(
-                  onPressed: _saving ? null : () => setState(() => _tempCameraPath = null),
+                  onPressed: _saving ? null : _removeTempPhoto,
                   icon: const Icon(Icons.close),
                   label: const Text('Remove'),
                 ),
@@ -180,17 +198,13 @@ class _EditReminderScreenState extends State<EditReminderScreen> {
               ),
             ],
           ),
-
           const SizedBox(height: 12),
-
           TextField(
             controller: _noteCtrl,
             decoration: const InputDecoration(labelText: 'Note'),
             maxLines: 3,
           ),
-
           const SizedBox(height: 12),
-
           Card(
             child: ListTile(
               title: const Text('Remind at'),
@@ -199,13 +213,15 @@ class _EditReminderScreenState extends State<EditReminderScreen> {
               onTap: _saving ? null : _pickTime,
             ),
           ),
-
           const SizedBox(height: 12),
-
           FilledButton.icon(
             onPressed: _saving ? null : _save,
             icon: _saving
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Icon(Icons.save_outlined),
             label: const Text('Save changes'),
           ),
@@ -233,19 +249,18 @@ class _EditImagePreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 1) If user retook photo, show temp immediately
-    final tp = tempCameraPath;
-    if (tp != null && tp.trim().isNotEmpty) {
+    final temp = tempCameraPath;
+    if (temp != null && temp.trim().isNotEmpty) {
       return _PhotoBox(
         child: Image.file(
-          File(tp),
+          File(temp),
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image_outlined)),
+          errorBuilder: (_, __, ___) =>
+              const Center(child: Icon(Icons.broken_image_outlined)),
         ),
       );
     }
 
-    // 2) Otherwise show existing saved image from Photos assetId
     if (reminder.assetId.isNotEmpty) {
       return FutureBuilder<File?>(
         future: photosStore.getFileFromAssetId(reminder.assetId),
@@ -261,14 +276,14 @@ class _EditImagePreview extends StatelessWidget {
       );
     }
 
-    // 3) Legacy fallback (may not exist after reinstall)
     final legacy = reminder.legacyImagePath;
     if (legacy != null && legacy.isNotEmpty) {
       return _PhotoBox(
         child: Image.file(
           File(legacy),
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.image_not_supported_outlined)),
+          errorBuilder: (_, __, ___) =>
+              const Center(child: Icon(Icons.image_not_supported_outlined)),
         ),
       );
     }
@@ -290,7 +305,8 @@ class _PhotoBox extends StatelessWidget {
       child: AspectRatio(
         aspectRatio: 16 / 10,
         child: ColoredBox(
-          color: Theme.of(context).cardTheme.color ?? Theme.of(context).colorScheme.surface,
+          color: Theme.of(context).cardTheme.color ??
+              Theme.of(context).colorScheme.surface,
           child: child,
         ),
       ),

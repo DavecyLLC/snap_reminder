@@ -6,6 +6,7 @@ import '../data/photos_store.dart';
 import '../data/reminders_repo.dart';
 import '../models/photo_reminder.dart';
 import 'photo_viewer_screen.dart';
+import '../../../utils/pickers.dart'; // adjust path if needed
 
 class ReminderDetailScreen extends StatelessWidget {
   final RemindersRepo repo;

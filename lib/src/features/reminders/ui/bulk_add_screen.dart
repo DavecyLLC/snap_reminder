@@ -1,3 +1,4 @@
+// lib/src/features/reminders/ui/bulk_add_screen.dart
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../services/notifications_service.dart';
+import '../../../utils/pickers.dart'; // ✅ PATCH: use safePickDate/safeShowTimePicker
 import '../data/image_store.dart';
 import '../data/reminders_repo.dart';
 import '../models/photo_reminder.dart';
@@ -13,7 +15,11 @@ class BulkAddScreen extends StatefulWidget {
   final RemindersRepo repo;
   final ImageStore imageStore;
 
-  const BulkAddScreen({super.key, required this.repo, required this.imageStore});
+  const BulkAddScreen({
+    super.key,
+    required this.repo,
+    required this.imageStore,
+  });
 
   @override
   State<BulkAddScreen> createState() => _BulkAddScreenState();
@@ -34,23 +40,28 @@ class _BulkAddScreenState extends State<BulkAddScreen> {
     super.dispose();
   }
 
+  // ✅ PATCH: root-navigator-safe pickers + micro delays (prevents keyboard-toggle crash)
   Future<void> _pickRemindAt() async {
     FocusManager.instance.primaryFocus?.unfocus();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+
     final now = DateTime.now();
 
-    final date = await showDatePicker(
-      context: context,
+    final date = await safePickDate(
+      initialDate: _remindAt,
       firstDate: now.subtract(const Duration(days: 365)),
       lastDate: now.add(const Duration(days: 3650)),
-      initialDate: _remindAt,
     );
     if (date == null) return;
 
-    final time = await showTimePicker(
-      context: context,
+    // let date route fully close
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+    if (!mounted) return;
+
+    final time = await safeShowTimePicker(
       initialTime: TimeOfDay.fromDateTime(_remindAt),
     );
-    if (time == null) return;
+    if (time == null || !mounted) return;
 
     setState(() {
       _remindAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
@@ -59,8 +70,11 @@ class _BulkAddScreenState extends State<BulkAddScreen> {
 
   Future<void> _pickMany() async {
     FocusManager.instance.primaryFocus?.unfocus();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+
     final files = await _picker.pickMultiImage(imageQuality: 90);
-    if (files.isEmpty) return;
+    if (files.isEmpty || !mounted) return;
+
     setState(() => _selected = files);
   }
 
@@ -93,7 +107,6 @@ class _BulkAddScreenState extends State<BulkAddScreen> {
 
       await widget.repo.addMany(reminders);
 
-      // ✅ schedule notifications for each
       for (final r in reminders) {
         await NotificationsService.instance.scheduleReminder(
           reminderId: r.id,
@@ -103,7 +116,8 @@ class _BulkAddScreenState extends State<BulkAddScreen> {
         );
       }
 
-      if (mounted) Navigator.pop(context);
+      if (!mounted) return;
+      Navigator.pop(context);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -136,7 +150,6 @@ class _BulkAddScreenState extends State<BulkAddScreen> {
             ],
           ),
           const SizedBox(height: 12),
-
           if (_selected.isNotEmpty) ...[
             SizedBox(
               height: 110,
@@ -155,14 +168,12 @@ class _BulkAddScreenState extends State<BulkAddScreen> {
             ),
             const SizedBox(height: 12),
           ],
-
           TextField(
             controller: _noteCtrl,
             decoration: const InputDecoration(labelText: 'Note (applies to all)'),
             maxLines: 2,
           ),
           const SizedBox(height: 12),
-
           Card(
             child: ListTile(
               title: const Text('Remind at'),

@@ -1,3 +1,4 @@
+// lib/src/features/reminders/ui/reminders_home_screen.dart
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import '../data/photos_store.dart';
 import '../data/reminders_repo.dart';
 import '../models/photo_reminder.dart';
 import 'widgets/reminder_card.dart';
+import '../../../utils/pickers.dart'; // ✅ use safePickDate / safeShowTimePicker
 
 class RemindersHomeScreen extends StatefulWidget {
   final RemindersRepo repo;
@@ -52,21 +54,27 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
 
   Future<void> _pickRemindAt() async {
     FocusManager.instance.primaryFocus?.unfocus();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
 
     final now = DateTime.now();
-    final date = await showDatePicker(
-      context: context,
+
+    // ✅ Safe date picker (root navigator via rootNavKey)
+    final date = await safePickDate(
+      initialDate: _remindAt,
       firstDate: now.subtract(const Duration(days: 365)),
       lastDate: now.add(const Duration(days: 3650)),
-      initialDate: _remindAt,
     );
     if (date == null) return;
 
-    final time = await showTimePicker(
-      context: context,
+    // Let date picker route close fully
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+    if (!mounted) return;
+
+    // ✅ Safe time picker (root navigator + stable constraints)
+    final time = await safeShowTimePicker(
       initialTime: TimeOfDay.fromDateTime(_remindAt),
     );
-    if (time == null) return;
+    if (time == null || !mounted) return;
 
     setState(() {
       _remindAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
@@ -75,28 +83,37 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
 
   Future<void> _takePhoto() async {
     FocusManager.instance.primaryFocus?.unfocus();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+
     final shot = await _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
-    if (shot == null) return;
+    if (shot == null || !mounted) return;
+
     setState(() => _tempCameraPath = shot.path);
   }
 
   Future<void> _retakePhoto() async => _takePhoto();
 
   Future<void> _clearTempPhoto() async {
+    if (!mounted) return;
     setState(() => _tempCameraPath = null);
   }
 
   Future<void> _saveQuick() async {
     FocusManager.instance.primaryFocus?.unfocus();
 
-    if (_tempCameraPath == null) {
+    final path = (_tempCameraPath ?? '').trim();
+    if (path.isEmpty) {
       await _takePhoto();
-      if (_tempCameraPath == null) return;
+      final newPath = (_tempCameraPath ?? '').trim();
+      if (newPath.isEmpty) return;
     }
 
     setState(() => _saving = true);
     try {
-      final assetId = await widget.photosStore.saveToPhotos(_tempCameraPath!);
+      final finalPath = (_tempCameraPath ?? '').trim();
+      if (finalPath.isEmpty) return;
+
+      final assetId = await widget.photosStore.saveToPhotos(finalPath);
 
       final now = DateTime.now();
       final r = PhotoReminder(
@@ -118,6 +135,8 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
         body: r.note.isNotEmpty ? r.note : 'Tap to view your photo',
       );
 
+      if (!mounted) return;
+
       setState(() {
         _tempCameraPath = null;
         _noteCtrl.clear();
@@ -126,17 +145,14 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
 
       _reload();
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Saved reminder')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Saved reminder')),
+      );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Save failed: $e')),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Save failed: $e')),
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -144,20 +160,15 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
 
   /// ✅ Deletes reminder + notification + photo source (best effort).
   Future<void> _deleteReminder(PhotoReminder r) async {
-    // 1) delete reminder record first
     await widget.repo.removeById(r.id);
-
-    // 2) cancel scheduled notification
     await NotificationsService.instance.cancelReminder(r.id);
 
-    // 3) delete from Photos (assetId)
     if (r.assetId.isNotEmpty) {
       try {
         await widget.photosStore.deleteFromPhotos(r.assetId);
       } catch (_) {}
     }
 
-    // 4) delete legacy file if it exists
     final legacy = r.legacyImagePath;
     if (legacy != null && legacy.isNotEmpty) {
       try {
@@ -175,10 +186,21 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
       appBar: AppBar(
         title: const Text('Reminders'),
         actions: [
-          IconButton(onPressed: () => context.push('/add'), icon: const Icon(Icons.add)),
-          IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
+          IconButton(
+            onPressed: _reload,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+          ),
         ],
       ),
+
+      // ✅ Primary add (big +, always visible)
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => context.push('/add'),
+        tooltip: 'Add reminder',
+        child: const Icon(Icons.add, size: 28),
+      ),
+
       body: ListView(
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(16),
@@ -201,22 +223,24 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
               child: Center(child: Text('No reminders yet')),
             )
           else
-            ..._items.map((r) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: ReminderCard(
-                    reminder: r,
-                    photosStore: widget.photosStore,
-                    onTap: () async {
-                      await context.push('/detail/${r.id}');
-                      _reload();
-                    },
-                    onLongPress: () async {
-                      await context.push('/edit/${r.id}');
-                      _reload();
-                    },
-                    onDelete: () => _deleteReminder(r),
-                  ),
-                )),
+            ..._items.map(
+              (r) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: ReminderCard(
+                  reminder: r,
+                  photosStore: widget.photosStore,
+                  onTap: () async {
+                    await context.push('/detail/${r.id}');
+                    _reload();
+                  },
+                  onLongPress: () async {
+                    await context.push('/edit/${r.id}');
+                    _reload();
+                  },
+                  onDelete: () => _deleteReminder(r),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -249,7 +273,8 @@ class _QuickAddCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasPhoto = tempPath != null;
+    final path = (tempPath ?? '').trim();
+    final hasPhoto = path.isNotEmpty;
 
     return Card(
       child: Padding(
@@ -265,7 +290,12 @@ class _QuickAddCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(18),
                 child: AspectRatio(
                   aspectRatio: 16 / 10,
-                  child: Image.file(File(tempPath!), fit: BoxFit.cover),
+                  child: Image.file(
+                    File(path),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) =>
+                        const Center(child: Icon(Icons.broken_image_outlined)),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),

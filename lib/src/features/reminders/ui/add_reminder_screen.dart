@@ -1,9 +1,12 @@
+// lib/src/features/reminders/ui/add_reminder_screen.dart
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../services/notifications_service.dart';
+import '../../../utils/pickers.dart';
 import '../data/photos_store.dart';
 import '../data/reminders_repo.dart';
 import '../models/photo_reminder.dart';
@@ -12,15 +15,19 @@ class AddReminderScreen extends StatefulWidget {
   final RemindersRepo repo;
   final PhotosStore photosStore;
 
-  const AddReminderScreen({super.key, required this.repo, required this.photosStore});
+  const AddReminderScreen({
+    super.key,
+    required this.repo,
+    required this.photosStore,
+  });
 
   @override
   State<AddReminderScreen> createState() => _AddReminderScreenState();
 }
 
 class _AddReminderScreenState extends State<AddReminderScreen> {
-  final _picker = ImagePicker();
-  final _noteCtrl = TextEditingController();
+  final ImagePicker _picker = ImagePicker();
+  final TextEditingController _noteCtrl = TextEditingController();
 
   String? _tempCameraPath;
   DateTime _remindAt = DateTime.now().add(const Duration(hours: 1));
@@ -34,50 +41,61 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
 
   Future<void> _takePhoto() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final shot = await _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
-    if (shot == null) return;
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+
+    final shot = await _picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 85,
+    );
+    if (shot == null || !mounted) return;
+
     setState(() => _tempCameraPath = shot.path);
   }
 
-  Future<void> _retakePhoto() async => _takePhoto();
-
   Future<void> _pickTime() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final now = DateTime.now();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
 
-    final date = await showDatePicker(
-      context: context,
-      firstDate: now.subtract(const Duration(days: 365)),
-      lastDate: now.add(const Duration(days: 3650)),
-      initialDate: _remindAt,
-    );
+    // ✅ EXACT snippet (matches pickers.dart signature)
+    final date = await safePickDate(initialDate: _remindAt);
     if (date == null) return;
 
-    final time = await showTimePicker(
-      context: context,
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+    if (!mounted) return;
+
+    final time = await safeShowTimePicker(
       initialTime: TimeOfDay.fromDateTime(_remindAt),
     );
-    if (time == null) return;
+    if (time == null || !mounted) return;
 
     setState(() {
-      _remindAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+      _remindAt = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time.hour,
+        time.minute,
+      );
     });
   }
 
   Future<void> _save() async {
     FocusManager.instance.primaryFocus?.unfocus();
 
-    if (_tempCameraPath == null) {
+    if ((_tempCameraPath ?? '').trim().isEmpty) {
       await _takePhoto();
-      if (_tempCameraPath == null) return;
+      if ((_tempCameraPath ?? '').trim().isEmpty) return;
     }
 
     setState(() => _saving = true);
     try {
-      final assetId = await widget.photosStore.saveToPhotos(_tempCameraPath!);
+      final finalPath = (_tempCameraPath ?? '').trim();
+      if (finalPath.isEmpty) return;
+
+      final assetId = await widget.photosStore.saveToPhotos(finalPath);
 
       final now = DateTime.now();
-      final r = PhotoReminder(
+      final reminder = PhotoReminder(
         id: const Uuid().v4(),
         assetId: assetId,
         legacyImagePath: null,
@@ -87,28 +105,33 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
         createdAt: now,
       );
 
-      await widget.repo.add(r);
+      await widget.repo.add(reminder);
 
       await NotificationsService.instance.scheduleReminder(
-        reminderId: r.id,
-        remindAt: r.remindAt,
+        reminderId: reminder.id,
+        remindAt: reminder.remindAt,
         title: 'Photo reminder',
-        body: r.note.isNotEmpty ? r.note : 'Tap to view your photo',
+        body: reminder.note.isNotEmpty ? reminder.note : 'Tap to view your photo',
       );
 
-      if (mounted) Navigator.pop(context);
+      if (!mounted) return;
+      Navigator.pop(context);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Save failed: $e')));
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Save failed: $e')),
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
+  void _removeTempPhoto() => setState(() => _tempCameraPath = null);
+
   @override
   Widget build(BuildContext context) {
-    final hasPhoto = _tempCameraPath != null;
+    final path = (_tempCameraPath ?? '').trim();
+    final hasPhoto = path.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Add reminder')),
@@ -121,24 +144,28 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
               borderRadius: BorderRadius.circular(22),
               child: AspectRatio(
                 aspectRatio: 16 / 10,
-                child: Image.file(File(_tempCameraPath!), fit: BoxFit.cover),
+                child: Image.file(
+                  File(path),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) =>
+                      const Center(child: Icon(Icons.broken_image_outlined)),
+                ),
               ),
             ),
             const SizedBox(height: 12),
           ],
-
           Wrap(
             spacing: 12,
             runSpacing: 12,
             children: [
               FilledButton.icon(
-                onPressed: _saving ? null : (hasPhoto ? _retakePhoto : _takePhoto),
+                onPressed: _saving ? null : _takePhoto,
                 icon: const Icon(Icons.photo_camera_outlined),
                 label: Text(hasPhoto ? 'Retake' : 'Take photo'),
               ),
               if (hasPhoto)
                 OutlinedButton.icon(
-                  onPressed: _saving ? null : () => setState(() => _tempCameraPath = null),
+                  onPressed: _saving ? null : _removeTempPhoto,
                   icon: const Icon(Icons.close),
                   label: const Text('Remove'),
                 ),
@@ -149,14 +176,12 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
               ),
             ],
           ),
-
           const SizedBox(height: 12),
           TextField(
             controller: _noteCtrl,
             decoration: const InputDecoration(labelText: 'Note'),
             maxLines: 3,
           ),
-
           const SizedBox(height: 12),
           Card(
             child: ListTile(
@@ -166,12 +191,15 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
               onTap: _saving ? null : _pickTime,
             ),
           ),
-
           const SizedBox(height: 12),
           FilledButton.icon(
             onPressed: _saving ? null : _save,
             icon: _saving
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Icon(Icons.save_outlined),
             label: const Text('Save'),
           ),
