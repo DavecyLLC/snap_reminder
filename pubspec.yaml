@@ -2,7 +2,7 @@ name: pic_reminder
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.0.0+2
+version: 1.0.0+3
 
 environment:
   sdk: ^3.10.3
@@ -29,6 +29,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   url_launcher: ^6.3.0
   package_info_plus: ^8.0.0
+  share_plus: ^10.0.2
 
 dev_dependencies:
   flutter_test:
