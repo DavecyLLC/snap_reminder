@@ -12,6 +12,10 @@ import '../data/reminders_repo.dart';
 import '../models/photo_reminder.dart';
 import 'widgets/reminder_card.dart';
 import '../../../utils/pickers.dart'; // ✅ use safePickDate / safeShowTimePicker
+import 'package:image_picker/image_picker.dart';
+import 'edit_reminder_screen.dart';
+
+
 
 class RemindersHomeScreen extends StatefulWidget {
   final RemindersRepo repo;
@@ -179,6 +183,30 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
 
     _reload();
   }
+  
+  Future<void> _addFrom(ImageSource source) async {
+      final x = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 92,
+      );
+      if (x == null) return;
+      if (!mounted) return;
+
+      // Reuse the existing flow you already have:
+      // Navigate to your existing Quick Add / Bulk Add screen and pass the picked file path using `extra`.
+      // (This avoids guessing EditReminderScreen constructor params.)
+      await Navigator.pushNamed(
+        context,
+        '/quick-add',
+        arguments: x.path,
+      );
+
+      if (!mounted) return;
+      _reload();
+    }
+
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -186,6 +214,11 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
       appBar: AppBar(
         title: const Text('Reminders'),
         actions: [
+          IconButton(
+            tooltip: 'Upload from Photos',
+            icon: const Icon(Icons.photo_library_rounded),
+            onPressed: () => _addFrom(ImageSource.gallery),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh',

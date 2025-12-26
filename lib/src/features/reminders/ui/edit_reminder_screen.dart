@@ -19,7 +19,7 @@ class EditReminderScreen extends StatefulWidget {
     required this.repo,
     required this.photosStore,
     required this.reminderId,
-  });
+  });  
 
   @override
   State<EditReminderScreen> createState() => _EditReminderScreenState();
