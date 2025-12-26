@@ -14,6 +14,8 @@ import 'src/features/reminders/ui/add_reminder_screen.dart';
 import 'src/features/reminders/ui/edit_reminder_screen.dart';
 import 'src/features/reminders/ui/reminder_detail_screen.dart';
 import 'src/features/reminders/ui/reminders_home_screen.dart';
+import 'src/features/settings/settings_screen.dart';
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,6 +40,11 @@ Future<void> main() async {
           photosStore: photosStore,
         ),
       ),
+      GoRoute(
+        path: '/settings',
+        builder: (context, state) => SettingsScreen(repo: repo),
+      ),
+
       GoRoute(
         path: '/add',
         builder: (context, state) => AddReminderScreen(

@@ -187,9 +187,14 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
         title: const Text('Reminders'),
         actions: [
           IconButton(
-            onPressed: _reload,
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh',
+            onPressed: _reload,
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_rounded),
+            tooltip: 'Settings',
+            onPressed: () => context.push('/settings'),
           ),
         ],
       ),
@@ -197,7 +202,7 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
       // ✅ Primary add (big +, always visible)
       floatingActionButton: FloatingActionButton(
         onPressed: () => context.push('/add'),
-        tooltip: 'Add reminder',
+        tooltip: 'Add your picture reminder',
         child: const Icon(Icons.add, size: 28),
       ),
 
