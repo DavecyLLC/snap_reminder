@@ -109,6 +109,7 @@ class ReminderDetailScreen extends StatelessWidget {
     );
 
   }
+  
 
   Future<void> _deleteReminder(BuildContext context, PhotoReminder r) async {
     final ok = await showDialog<bool>(

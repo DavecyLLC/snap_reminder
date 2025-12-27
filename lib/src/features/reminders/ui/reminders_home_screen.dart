@@ -192,18 +192,22 @@ class _RemindersHomeScreenState extends State<RemindersHomeScreen> {
       if (x == null) return;
       if (!mounted) return;
 
-      // Reuse the existing flow you already have:
-      // Navigate to your existing Quick Add / Bulk Add screen and pass the picked file path using `extra`.
-      // (This avoids guessing EditReminderScreen constructor params.)
-      await Navigator.pushNamed(
+      await Navigator.push(
         context,
-        '/quick-add',
-        arguments: x.path,
+        MaterialPageRoute(
+          builder: (_) => EditReminderScreen(
+            repo: widget.repo,
+            photosStore: widget.photosStore,
+            initialImagePath: x.path,
+          ),
+        ),
       );
 
       if (!mounted) return;
       _reload();
-    }
+ }
+
+    
 
 
 
